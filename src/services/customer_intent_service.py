@@ -69,6 +69,10 @@ class CustomerIntentService:
                 name="suggested_focus",
                 description="1 câu gợi ý NV nên trả lời tập trung vào đâu",
             ),
+            ResponseSchema(
+                name="suggested_reply",
+                description="Dự thảo tin nhắn phản hồi chi tiết, lịch sự, xưng hô phù hợp với ngữ cảnh (dùng từ 'shop' và 'bạn'/'anh'/'chị') để gửi trực tiếp cho khách.",
+            ),
         ]
         parser = StructuredOutputParser.from_response_schemas(schemas)
         prompt = ChatPromptTemplate.from_messages(
@@ -76,9 +80,12 @@ class CustomerIntentService:
                 (
                     "system",
                     "Bạn là trợ lý CSKH thời gian thực. Đọc TOÀN BỘ hội thoại Facebook Messenger "
-                    "(shop thời trang/trang sức) — không chỉ tin cuối — để xác định khách đang cần gì, "
-                    "SP quan tâm, mức độ gấp và gợi ý NV nên tập trung. "
-                    "Chỉ trả JSON đúng format. Tiếng Việt tự nhiên, ngắn gọn.",
+                    "(shop thời trang/trang sức) để xác định khách đang cần gì, "
+                    "SP quan tâm, mức độ gấp, gợi ý hướng xử lý của NV (suggested_focus) "
+                    "và đặc biệt dự thảo tin nhắn trả lời trực tiếp cho khách hàng (suggested_reply). "
+                    "suggested_reply cần viết cực kỳ lịch sự, thân thiện, trả lời đúng trọng tâm câu hỏi cuối của khách, "
+                    "xưng hô 'shop' và gọi khách là 'bạn/dạ anh/dạ chị' thích hợp. "
+                    "Chỉ trả JSON đúng format. Tiếng Việt tự nhiên.",
                 ),
                 (
                     "human",
@@ -129,6 +136,7 @@ class CustomerIntentService:
                 product_mentions=product_mentions[:10],
                 urgency=urgency,
                 suggested_focus=str(parsed.get("suggested_focus") or "").strip(),
+                suggested_reply=str(parsed.get("suggested_reply") or "").strip(),
             )
         except Exception:
             traceback.print_exc()
@@ -139,4 +147,5 @@ class CustomerIntentService:
                 product_mentions=[],
                 urgency="normal",
                 suggested_focus="Xem tin nhắn mới và phản hồi trực tiếp.",
+                suggested_reply="",
             )

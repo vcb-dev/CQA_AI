@@ -25,3 +25,8 @@ class CustomerIntentResponse(BaseModel):
         default="",
         description="Gợi ý ngắn cho NV nên tập trung trả lời gì",
     )
+    suggested_reply: str = Field(
+        default="",
+        description="Tin nhắn gợi ý phản hồi chi tiết, lịch sự, xưng hô phù hợp để gửi trực tiếp cho khách",
+    )
+

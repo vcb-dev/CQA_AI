@@ -1,5 +1,6 @@
 import os
 from typing import Optional, List
+from contextlib import asynccontextmanager
 
 import logging
 from pathlib import Path
@@ -22,8 +23,23 @@ from src.utils.user_facing_error import to_user_facing_error
 load_dotenv(dotenv_path=Path(__file__).resolve().with_name(".env"))
 
 DEFAULT_ASSISTANT_LLM_MODEL = "deepseek-chat"
+logger = logging.getLogger("cqa_ai")
 
-app = FastAPI(title="CQA CRM - AI Service")
+
+def get_assistant_model() -> str:
+    return (os.getenv("ASSISTANT_LLM_MODEL") or DEFAULT_ASSISTANT_LLM_MODEL).strip()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    if not (os.getenv("DEEPSEEK_API_KEY") or os.getenv("OPENAI_API_KEY")):
+        logger.warning("DEEPSEEK_API_KEY / OPENAI_API_KEY chưa cấu hình — LLM sẽ lỗi")
+    else:
+        logger.info("LLM API key configured; model=%s", get_assistant_model())
+    yield
+
+
+app = FastAPI(title="CQA CRM - AI Service", lifespan=lifespan)
 
 # ─── CORS ────────────────────────────────────────────────────────────────────
 app.add_middleware(
@@ -39,14 +55,9 @@ audit_service = AuditService()
 assistant_service = AssistantService()
 customer_intent_service = CustomerIntentService()
 deepseek_balance_service = DeepSeekBalanceService()
-logger = logging.getLogger("cqa_ai")
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
-def get_assistant_model() -> str:
-    return (os.getenv("ASSISTANT_LLM_MODEL") or DEFAULT_ASSISTANT_LLM_MODEL).strip()
-
-
 def get_llm_mode() -> str:
     if os.getenv("DEEPSEEK_API_KEY"):
         return "deepseek"
@@ -90,13 +101,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
     )
 
 
-# ─── Startup ──────────────────────────────────────────────────────────────────
-@app.on_event("startup")
-async def on_startup():
-    if not (os.getenv("DEEPSEEK_API_KEY") or os.getenv("OPENAI_API_KEY")):
-        logger.warning("DEEPSEEK_API_KEY / OPENAI_API_KEY chưa cấu hình — LLM sẽ lỗi")
-    else:
-        logger.info("LLM API key configured; model=%s", get_assistant_model())
+# ─── Startup (Handled by lifespan) ───────────────────────────────────────────
 
 
 class ChatMessage(BaseModel):
