@@ -14,10 +14,21 @@ from dotenv import load_dotenv
 
 from src.services.audit_service import AuditService
 from src.services.assistant_service import AssistantService
+from src.services.knowledge_base import KnowledgeBase
+from src.services.rag_store import RAGStore
 from src.services.customer_intent_service import CustomerIntentService
+from src.services.translate_service import TranslateService
 from src.services.deepseek_balance_service import DeepSeekBalanceService
 from src.models.customer_intent_models import CustomerIntentRequest, CustomerIntentResponse
 from src.models.assistant_models import AssistantChatRequest, AssistantChatResponse
+from src.models.translate_models import (
+    DetectLangRequest,
+    DetectLangResponse,
+    TranslateBatchRequest,
+    TranslateBatchResponse,
+    TranslateRequest,
+    TranslateResponse,
+)
 from src.utils.user_facing_error import to_user_facing_error
 
 load_dotenv(dotenv_path=Path(__file__).resolve().with_name(".env"))
@@ -36,6 +47,7 @@ async def lifespan(app: FastAPI):
         logger.warning("DEEPSEEK_API_KEY / OPENAI_API_KEY chưa cấu hình — LLM sẽ lỗi")
     else:
         logger.info("LLM API key configured; model=%s", get_assistant_model())
+    assistant_service.load_knowledge()
     yield
 
 
@@ -52,8 +64,9 @@ app.add_middleware(
 
 # ─── Services ─────────────────────────────────────────────────────────────────
 audit_service = AuditService()
-assistant_service = AssistantService()
+assistant_service = AssistantService(knowledge=KnowledgeBase(), rag=RAGStore())
 customer_intent_service = CustomerIntentService()
+translate_service = TranslateService()
 deepseek_balance_service = DeepSeekBalanceService()
 
 
@@ -123,6 +136,9 @@ async def root():
         "endpoints": [
             "/audit",
             "/cskh/customer-intent",
+            "/cskh/translate",
+            "/cskh/translate-batch",
+            "/cskh/detect-lang",
             "/deepseek/balance",
             "/assistant/chat",
             "/assistant/health",
@@ -164,6 +180,24 @@ async def deepseek_balance():
 @app.post("/cskh/customer-intent", response_model=CustomerIntentResponse)
 async def cskh_customer_intent(request: CustomerIntentRequest):
     return await customer_intent_service.analyze(request)
+
+
+@app.post("/cskh/translate", response_model=TranslateResponse)
+async def cskh_translate(request: TranslateRequest):
+    """Dịch tin nhắn — không lưu DB (BE chịu trách nhiệm persist)."""
+    return await translate_service.translate(request)
+
+
+@app.post("/cskh/translate-batch", response_model=TranslateBatchResponse)
+async def cskh_translate_batch(request: TranslateBatchRequest):
+    """Dịch nhiều tin 1 lần gọi LLM — nhanh hơn khi mở hội thoại."""
+    return await translate_service.translate_batch(request)
+
+
+@app.post("/cskh/detect-lang", response_model=DetectLangResponse)
+async def cskh_detect_lang(request: DetectLangRequest):
+    """Phát hiện ngôn ngữ hội thoại — không lưu DB."""
+    return await translate_service.detect_lang(request)
 
 
 @app.post("/audit")
