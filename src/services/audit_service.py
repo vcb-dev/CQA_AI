@@ -138,7 +138,9 @@ class AuditService:
             n = default
         return max(0, min(20, n))
 
-    def _enrich_parsed_output(self, parsed_output: dict, no_reply: bool) -> dict:
+    def _enrich_parsed_output(
+        self, parsed_output: dict, no_reply: bool, truncated: bool = False
+    ) -> dict:
         if no_reply:
             parsed_output["score"] = 0
             criteria = {k: 0 for k in ("greeting", "needs", "consult", "objection", "closing")}
@@ -150,6 +152,10 @@ class AuditService:
                 "objection": self._clamp_criterion(parsed_output.get("score_objection")),
                 "closing": self._clamp_criterion(parsed_output.get("score_closing")),
             }
+            if truncated:
+                observed = [criteria[k] for k in ("needs", "consult", "objection", "closing")]
+                criteria["greeting"] = self._clamp_criterion(round(sum(observed) / 4))
+                parsed_output["greeting_estimated"] = True
             total = sum(criteria.values())
             score = self._clamp_score_total(parsed_output.get("score"), 0)
             if total == 0 and score > 0:
@@ -165,6 +171,14 @@ class AuditService:
 
         parsed_output["criteria_scores"] = criteria
         return parsed_output
+
+    _TRUNCATION_NOTE = """
+TRANSCRIPT THIẾU PHẦN ĐẦU (BẮT BUỘC TUÂN THỦ):
+- Hội thoại này quá dài nên phần ĐẦU đã bị cắt bỏ — bạn KHÔNG nhìn thấy những tin nhắn đầu tiên.
+- TUYỆT ĐỐI KHÔNG kết luận "NV không chào hỏi" hay trừ điểm score_greeting chỉ vì không thấy lời chào.
+- Nếu không quan sát được lời chào do thiếu dữ liệu: chấm score_greeting bằng mức trung bình của 4 tiêu chí còn lại.
+- KHÔNG đưa "thiếu lời chào" vào weaknesses hay action_items.
+"""
 
     _ANALYSIS_FIELDS_INSTRUCTION = """
 PHÂN TÍCH CHI TIẾT (BẮT BUỘC):
@@ -187,13 +201,17 @@ PHÂN TÍCH CHI TIẾT (BẮT BUỘC):
         no_reply: bool = False,
         agent_name: str = None,
         customer_name: str = None,
+        truncated: bool = False,
+        transcript_trimmed: bool = False,
     ):
         try:
             transcript_str = self._build_transcript_str(transcript_data)
 
+            transcript_incomplete = truncated or transcript_trimmed
+
             has_staff = any(m.get("sender") == "Staff" for m in transcript_data)
             # An toàn: chỉ 0 điểm khi transcript không có tin Staff
-            if not has_staff:
+            if not has_staff and not transcript_incomplete:
                 no_reply = True
 
             response_schemas = self._get_response_schemas()
@@ -251,6 +269,8 @@ NGỮ CẢNH TRANSCRIPT:
 - Transcript gồm TOÀN BỘ tin nhắn từ lúc bắt đầu hội thoại đến HẾT ngày được chấm audit (không chỉ tin trong 1 ngày).
 - Hội thoại được đưa vào audit vì CÓ hoạt động trong ngày chấm — nhưng phải đánh giá dựa trên cả lịch sử trước đó.
 - KHÔNG cho 0 điểm / không kết luận "NV chưa rep" nếu transcript có tin Staff từ các ngày trước.
+- Dòng dạng "(… N tin nhắn …)" là dấu hiệu transcript đã lược bớt đoạn GIỮA cho gọn — không phải tin nhắn thật, không đánh giá nội dung dòng đó.
+{truncation_note}
 
 BỘ QUY TẮC CÔNG TY:
 {rules}
@@ -284,6 +304,7 @@ TRANSCRIPT (toàn bộ hội thoại đến hết ngày audit — Khách hàng +
                     rules=self.rules_text,
                     format_instructions=format_instructions,
                     analysis_fields=self._ANALYSIS_FIELDS_INSTRUCTION,
+                    truncation_note=self._TRUNCATION_NOTE if truncated else "",
                 )
 
             response = await self.llm.ainvoke(messages)
@@ -291,18 +312,20 @@ TRANSCRIPT (toàn bộ hội thoại đến hết ngày audit — Khách hàng +
             
             try:
                 parsed_output = output_parser.parse(response.content)
-                parsed_output = self._enrich_parsed_output(parsed_output, no_reply)
+                parsed_output = self._enrich_parsed_output(parsed_output, no_reply, truncated)
                 parsed_output["token_usage"] = token_usage
                 return parsed_output
             except Exception as e:
+                raw = str(response.content or "")
+                print(
+                    f"[AuditService] PARSE FAILED: {e} | raw_head={raw[:500]}",
+                    flush=True,
+                )
                 return {
-                    "score": 0 if no_reply else 50,
-                    "feedback": f"Lỗi phân tích kết quả từ AI: {str(e)}. Nội dung thô: {response.content}",
-                    "action_items": "",
-                    "suggested_replies": "",
-                    "violations": [],
-                    "customer_name": customer_name or "Khách hàng",
-                    "agent_name": agent_name or "Nhân viên",
+                    "error": True,
+                    "reason": "parse_failed",
+                    "message": f"Lỗi phân tích kết quả từ AI: {e}",
+                    "raw_preview": raw[:1000],
                     "token_usage": token_usage,
                 }
         except Exception as e:
@@ -311,12 +334,8 @@ TRANSCRIPT (toàn bộ hội thoại đến hết ngày audit — Khách hàng +
 
             safe = to_user_facing_error(str(e))
             return {
-                "score": 0,
-                "feedback": f"Không thể phân tích hội thoại: {safe}",
-                "action_items": "",
-                "suggested_replies": "",
-                "violations": [],
-                "customer_name": customer_name or "Khách hàng",
-                "agent_name": agent_name or "Nhân viên",
+                "error": True,
+                "reason": "audit_failed",
+                "message": f"Không thể phân tích hội thoại: {safe}",
                 "token_usage": self._empty_token_usage(),
             }
