@@ -127,6 +127,8 @@ class AuditRequest(BaseModel):
     no_reply: Optional[bool] = False
     agent_name: Optional[str] = None
     customer_name: Optional[str] = None
+    truncated: Optional[bool] = False
+    transcript_trimmed: Optional[bool] = False
 
 # ─── Routes ───────────────────────────────────────────────────────────────────
 @app.get("/")
@@ -208,6 +210,8 @@ async def audit_chat(request: AuditRequest):
         no_reply=request.no_reply or False,
         agent_name=request.agent_name,
         customer_name=request.customer_name,
+        truncated=request.truncated or False,
+        transcript_trimmed=request.transcript_trimmed or False,
     )
     return result
 
